@@ -1,0 +1,222 @@
+#!/usr/bin/python2.7
+#-*- coding:utf-8 -*-
+
+import datetime
+import gpod
+import mimetypes
+import os
+import subprocess
+import sys
+
+# -----------------------------------------------------------------------------
+#
+# gpod+ - Script for Midnight Commander's external vfs
+# according to README:
+#    https://github.com/MidnightCommander/mc/tree/master/src/vfs/extfs/helpers
+#
+# -----------------------------------------------------------------------------
+
+
+class Pod(object):
+    show_master = False
+    show_empty_playlist = True
+    speak_playlist = True
+    speak_track = False
+    speak_engine = 'festival'
+
+    def __init__(self, path):
+        self.db = None
+        self.playlists = []
+        self.mount_path = path
+        self.speakable_path = os.path.join(path, 'iPod_Control', 'Speakable')
+
+        try:
+            self.db = gpod.Database(path)
+
+            pls = self.db.get_playlists()
+            condition = lambda pl: not pl.master or self.show_master
+            self.playlists = filter(condition, pls)
+        except gpod.DatabaseException:
+            raise Exception('The current folder must be a mount point')
+
+    def _make_hexid(self, item_id):
+        '''
+        Generate hex id for speakable
+        '''
+        item_id = hex(item_id)[2:-1]
+        item_id = item_id.upper().rjust(16, '0')
+
+        return item_id
+
+    def _make_safe_name(self, name):
+        '''
+        Remove special characters from name
+        '''
+        if name is not None:
+            illegal_chars = ':/*'
+            name = str.translate(name, None, illegal_chars)
+
+        return name
+
+    def _get_item(self, name):
+        '''
+        Get Track or Playlist item by name
+        '''
+        head, tail = os.path.split(name)
+
+        if tail.startswith('*') and head:
+            file_name = tail.split(' - ')[-1]
+            file_name = file_name.split(':')
+            file_name = '%s/%s' % (file_name[0], file_name[1])
+
+            playlist = (it for it in self.playlists if it.name == head)
+            playlist = next(playlist, None)
+            item = (it for it in playlist if file_name in it.ipod_filename())
+            item = next(item, None)
+        else:
+            item = (it for it in self.playlists if it.name == tail)
+            item = next(item, None)
+
+        return item
+
+    def _create_speakable(self, message, file_name):
+        '''
+        Create wav file for VoiceOver
+        '''
+        file_path = os.path.join(self.speakable_path, file_name + '.wav')
+        cmd = ''
+
+        if self.speak_engine is 'espeak':
+            cmd = ('espeak', '-w', file_path)
+        elif self.speak_engine is 'festival':
+            cmd = ('text2wave', '-o', file_path)
+
+        convert = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        convert.communicate(message)
+
+    def _check_for_compatible(self, path):
+        '''
+        Check file for compatible formats: mp3, aac, wav, aa
+        '''
+        formats = ['audio/aac',
+                   'audio/mpeg',
+                   'audio/wav',
+                   'audio/x-wav',
+                   'audio/audible']
+        is_compatible = mimetypes.guess_type(path)[0] in formats
+
+        return is_compatible
+
+    def list_content(self):
+        '''
+        List content of db: playlists and tracks
+        '''
+        format = '%s %s %s %s %s %s %s/%s'
+        perm = '-r--r--r--'
+
+        for playlist in self.playlists:
+            if len(playlist) > 0:
+                for track in playlist:
+                    file_name = track.ipod_filename()
+                    stat = os.stat(file_name)
+                    artist = self._make_safe_name(track['artist'])
+                    title = self._make_safe_name(track['title'])
+                    file_dir = os.path.dirname(file_name).split(os.sep)[-1]
+                    file_name = os.path.basename(file_name)
+                    track_name = '* %s - %s - %s:%s' % (artist, title,
+                                                        file_dir, file_name)
+                    date = datetime.datetime.fromtimestamp(stat.st_ctime)
+                    date = date.strftime('%m-%d-%Y %H:%M')
+                    print format % (perm, stat.st_nlink, stat.st_uid,
+                                    stat.st_gid, stat.st_size, date,
+                                    playlist.name, track_name)
+            elif self.show_empty_playlist:
+                user_name = os.getlogin()
+                date = '01-01-2000 00:00'
+                print format % (perm, 1, user_name, 0, 0,
+                                date, playlist.name, ' ')
+
+    def remove_item(self, name):
+        '''
+        Remove playlist or track by name from db
+        '''
+        item = self._get_item(name)
+        if item:
+            self.db.remove(item)
+
+            # remove speakable
+            item_is_playlist = item.__class__ is gpod.ipod.Playlist
+            item_id = item.id if item_is_playlist else item['dbid']
+            file_name = self._make_hexid(item_id)
+            file_path = os.path.join(self.speakable_path, file_name + '.wav')
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+    def copy_track(self, name, source):
+        '''
+        Add to the db the source track with the name {name} inside the db
+        '''
+        if self._check_for_compatible(source):
+            track = self.db.new_Track(filename=source)
+            playlist = self._get_item(os.path.dirname(name))
+
+            if playlist and track.copy_to_ipod():
+                playlist.add(track)
+
+                if self.speak_track:
+                    dbid = track['dbid']
+                    hexid = self._make_hexid(dbid)
+                    artist = self._make_safe_name(track['artist'])
+                    title = self._make_safe_name(track['title'])
+                    message = '%s %s' % (artist, title)
+                    self._create_speakable(message, 'Tracks/' + hexid)
+
+    def create_playlist(self, name):
+        '''
+        Create a new playlist inside db
+        '''
+        name = self._make_safe_name(name)
+        playlist = self.db.new_Playlist(name)
+
+        if self.speak_playlist:
+            hexid = self._make_hexid(playlist.id)
+            self._create_speakable(name, 'Playlists/' + hexid)
+
+    def close(self):
+        '''
+        Save and close db
+        '''
+        self.db.close()
+
+# -----------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    args = sys.argv[1:]
+
+    cmd = args[0] if len(args) > 0 else None
+    args = args[1:]
+
+    if cmd is not None:
+        mount_path = args[0] if len(args) > 0 else os.getcwd()
+        pod = Pod(mount_path)
+
+        if cmd == 'list':
+            pod.list_content()
+        elif cmd == 'copyin' and len(args) == 3:
+            name, source = args[1], args[2]
+            pod.copy_track(name, source)
+        elif cmd == 'copyout':
+            pass
+        elif cmd == 'rm' and len(args) == 2:
+            name = args[1]
+            pod.remove_item(name)
+        elif cmd == 'rmdir' and len(args) == 2:
+            name = args[1]
+            pod.remove_item(name)
+        elif cmd == 'mkdir' and len(args) == 2:
+            name = args[1]
+            pod.create_playlist(name)
+        else:
+            print 'Wrong args: %s' % sys.argv[1:]
+
+        pod.close()
