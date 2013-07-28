@@ -1,4 +1,19 @@
-mc_extfs_gpod
+gpod+
 =============
 
-Script for the extfs vfs in Midnight Commander
+Скрипт для extfs виртуальной фс в Midnight Commander.
+
+## Зависимости
+
+- mc (вер. >= 3.1)
+- libgpod (смотрел только на 0.8.2)
+
+## Установка
+
+Поместить файл gpod+ в папку $(libexecdir)/mc/extfs.d или ~/.mc/extfs.d. У файла должны быть установлены права на выполнение.
+
+## Использование
+
+Через mc перейти в папку, в которую примонтировали ipod, и в шелле ввести:
+
+    cd gpod://
