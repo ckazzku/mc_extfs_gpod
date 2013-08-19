@@ -1,8 +1,10 @@
-#!/usr/bin/python2.7
+#!/usr/bin/env python2.7
 #-*- coding:utf-8 -*-
 
+from mutagen.mp3 import MP3
 import datetime
 import gpod
+import locale
 import mimetypes
 import os
 import subprocess
@@ -107,6 +109,42 @@ class Pod(object):
 
         return is_compatible
 
+    def _new_track(self, source):
+        '''
+        Create new track object from source
+        '''
+        charset = locale.getpreferredencoding()
+        pc_mtime = os.stat(source).st_mtime
+
+        track = self.db.new_Track()
+        track['userdata'] = {'transferred': 0,
+                             'charset': charset,
+                             'pc_mtime': pc_mtime}
+        track._set_userdata_utf8('filename', source)
+
+        try:
+            audiofile = MP3(track._userdata_into_default_locale('filename'))
+        except Exception as e:
+            raise gpod.TrackException(str(e))
+
+        for tag, attrib in (('TPE1', 'artist'),
+                            ('TIT2', 'title'),
+                            ('TCON', 'genre'),
+                            ('TALB', 'album')):
+            try:
+                value = audiofile[tag]
+                track[attrib] = value.text[0].encode('UTF-8', 'replace')
+            except KeyError:
+                pass
+
+        if track['title'] is None:
+            file_name = os.path.split(source)[1]
+            file_name = os.path.splitext(file_name)[0]  # without extension
+            track['title'] = file_name.decode(charset).encode('UTF-8')
+        track['tracklen'] = int(audiofile.info.length * 1000)
+
+        return track
+
     def list_content(self):
         '''
         List content of db: playlists and tracks
@@ -157,7 +195,7 @@ class Pod(object):
         Add to the db the source track with the name {name} inside the db
         '''
         if self._check_for_compatible(source):
-            track = self.db.new_Track(filename=source)
+            track = self._new_track(source)
             playlist = self._get_item(os.path.dirname(name))
 
             if playlist and track.copy_to_ipod():
