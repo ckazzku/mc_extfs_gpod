@@ -180,7 +180,7 @@ class Pod(object):
         '''
         item = self._get_item(name)
         if item:
-            self.db.remove(item)
+            self.db.remove(item, quiet=True)
 
             # remove speakable
             item_is_playlist = item.__class__ is gpod.ipod.Playlist
