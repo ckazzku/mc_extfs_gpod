@@ -124,8 +124,8 @@ class Pod(object):
 
         try:
             audiofile = MP3(track._userdata_into_default_locale('filename'))
-        except gpod.TrackException, e:
-            raise Exception(str(e))
+        except Exception, e:
+            raise gpod.TrackException(str(e))
 
         for tag, attrib in (('TPE1', 'artist'),
                             ('TIT2', 'title'),
