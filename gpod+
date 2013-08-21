@@ -38,8 +38,8 @@ class Pod(object):
             pls = self.db.get_playlists()
             condition = lambda pl: not pl.master or self.show_master
             self.playlists = filter(condition, pls)
-        except gpod.DatabaseException:
-            raise Exception('The current folder must be a mount point')
+        except gpod.DatabaseException, e:
+            raise Exception(u'%s\nThe current folder must be a mount point' % e)
 
     def _make_hexid(self, item_id):
         '''
@@ -124,8 +124,8 @@ class Pod(object):
 
         try:
             audiofile = MP3(track._userdata_into_default_locale('filename'))
-        except Exception as e:
-            raise gpod.TrackException(str(e))
+        except gpod.TrackException, e:
+            raise Exception(str(e))
 
         for tag, attrib in (('TPE1', 'artist'),
                             ('TIT2', 'title'),
@@ -198,16 +198,19 @@ class Pod(object):
             track = self._new_track(source)
             playlist = self._get_item(os.path.dirname(name))
 
-            if playlist and track.copy_to_ipod():
-                playlist.add(track)
+            try:
+                if playlist and track.copy_to_ipod():
+                    playlist.add(track)
 
-                if self.speak_track:
-                    dbid = track['dbid']
-                    hexid = self._make_hexid(dbid)
-                    artist = self._make_safe_name(track['artist'])
-                    title = self._make_safe_name(track['title'])
-                    message = '%s %s' % (artist, title)
-                    self._create_speakable(message, 'Tracks/' + hexid)
+                    if self.speak_track:
+                        dbid = track['dbid']
+                        hexid = self._make_hexid(dbid)
+                        artist = self._make_safe_name(track['artist'])
+                        title = self._make_safe_name(track['title'])
+                        message = '%s %s' % (artist, title)
+                        self._create_speakable(message, 'Tracks/' + hexid)
+            except gpod.TrackException, e:
+                raise Exception(u'%s\nOut of free space on device' % e)
 
     def create_playlist(self, name):
         '''
