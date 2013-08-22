@@ -133,7 +133,9 @@ class Pod(object):
                             ('TALB', 'album')):
             try:
                 value = audiofile[tag]
-                track[attrib] = value.text[0].encode('UTF-8', 'replace')
+                value = value.text[0] if value.text else None
+                value = value.encode('UTF-8', 'replace') if value else None
+                track[attrib] = value
             except KeyError:
                 pass
 
